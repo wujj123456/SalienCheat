@@ -192,13 +192,35 @@ class Saliens(requests.Session):
         self.pbar_refresh()
         return self.planet
 
+    @property
+    def player_clan_id(self):
+        if 'clan_info' in self.player_info:
+            return self.player_info['clan_info']['accountid']
+        return None
+
+    def _clan_key(self, top_clans):
+        if not top_clans or not self.player_clan_id:
+            return 0
+        for i, clan in enumerate(reversed(top_clans)):
+            if clan['accountid'] == self.player_clan_id:
+                return i + 1
+        return 0
+
     def sort_zones(self, zones, difficulty, cutoff=0.95):
-        return sorted((z for z in zones
+        # first sort by position
+        pos_sort = sorted((z for z in zones
                        if (not z['captured']
                            and z['difficulty'] == difficulty
                            and z.get('capture_progress', 0) < cutoff)),
                       reverse=True,
                       key=lambda x: x['zone_position'])
+
+        # prioritize reinforcing leading zones first
+        return sorted(
+            pos_sort,
+            reverse=True,
+            key=lambda z: self._clan_key(z.get('top_clans', None)),
+        )
 
     def get_planet(self, pid):
         planet = self.sget('ITerritoryControlMinigameService/GetPlanet',
@@ -597,6 +619,11 @@ try:
                 game.join_zone(zone_id)
                 stoptime = time() + 109.6
                 game.refresh_player_info()
+                if 'top_clans' in zones[0]:
+                    game.log(
+                        "    Zone leaders: %s",
+                        [c['name'] for c in zones[0]['top_clans']],
+                    )
 
                 # refresh progress bars while in battle
                 for i in count(start=1):
