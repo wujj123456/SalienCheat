@@ -198,7 +198,7 @@ class Saliens(requests.Session):
             return self.player_info['clan_info']['accountid']
         return None
 
-    def _sort_key(self, zone):
+    def _zone_sort_key(self, zone):
         progress = zone.get('capture_progress', 0)
         pos = zone['zone_position']
         clan_weight = 0
@@ -211,14 +211,55 @@ class Saliens(requests.Session):
                     clan_weight = i + 1
         return (clan_weight, progress, pos)
 
-    def sort_zones(self, zones, difficulty, cutoff=0.95):
-        # first sort by position
-        return sorted((z for z in zones
-                       if (not z['captured']
-                           and z['difficulty'] == difficulty
-                           and z.get('capture_progress', 0) < cutoff)),
-                      reverse=True,
-                      key=self._sort_key)
+    def sort_zones(self, zones, difficulty, cutoff):
+        with_cutoff = sorted(
+            (
+                z for z in zones if (
+                    not z['captured'] and z['difficulty'] == difficulty
+                    and z.get('capture_progress', 0) < cutoff
+                )
+            ),
+            reverse=True,
+            key=self._zone_sort_key,
+        )
+        if cutoff != 1.0 and not with_cutoff:
+            return sorted(
+                (
+                    z for z in zones if (
+                        not z['captured'] and z['difficulty'] == difficulty
+                    )
+                ),
+                reverse=True,
+                key=self._zone_sort_key,
+            )
+        else:
+            return with_cutoff
+
+    def _planet_sort_key(self, planet):
+        diff_m = {
+            'easy_zones': 1,
+            'medium_zones': 10**2,
+            'hard_zones': 10**4,
+            'boss_zones': 10**6,
+        }
+        lead_m = 30
+
+        # prefer harder zones with most leads
+        key = 0
+        if self.player_clan_id:
+            for diff in diff_m:
+                for zone in planet[diff]:
+                    # don't boost really new zones
+                    if zone.get('capture_progress', 0) < 0.1:
+                        key += diff_m[diff]
+                        continue
+                    progress = zone['capture_progress']
+                    if 'leader' in zone:
+                        if zone['leader']['accountid'] == self.player_clan_id:
+                            key += diff_m[diff] * lead_m * progress
+                            continue
+                    key += diff_m[diff]
+        return key
 
     def get_planet(self, pid):
         planet = self.sget('ITerritoryControlMinigameService/GetPlanet',
@@ -228,29 +269,13 @@ class Saliens(requests.Session):
 
         if planet:
             planet['easy_zones'] = self.sort_zones(planet['zones'], 1, 1.0)
-            planet['medium_zones'] = self.sort_zones(planet['zones'], 2)
-            planet['hard_zones'] = self.sort_zones(planet['zones'], 3)
+            planet['medium_zones'] = self.sort_zones(planet['zones'], 2, 0.96)
+            planet['hard_zones'] = self.sort_zones(planet['zones'], 3, 0.95)
             planet['boss_zones'] = sorted((z for z in planet['zones']
                                            if not z['captured'] and z['type'] == 4),
                                           reverse=True,
                                           key=lambda x: x['zone_position'])
-
-            # Example ordering (easy/med/hard):
-            # 20/5/1 > 20/5/5 > 20/1/0 > 1/20/0
-            # This should result in prefering planets that are nearing completion, but
-            # still prioritize ones that have high difficulty zone to maximize score gain
-            sort_key = 0
-
-            if len(planet['easy_zones']):
-                sort_key += 99 - len(planet['easy_zones'])
-            if len(planet['medium_zones']):
-                sort_key += 10**2 * (99 - len(planet['medium_zones']))
-            if len(planet['hard_zones']):
-                sort_key += 10**4 * (99 - len(planet['hard_zones']))
-            if len(planet['boss_zones']):
-                sort_key += 10**6 * (99 - len(planet['boss_zones']))
-
-            planet['sort_key'] = sort_key
+            planet['sort_key'] = self._planet_sort_key(planet)
 
         return planet
 
