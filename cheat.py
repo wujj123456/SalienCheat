@@ -192,6 +192,14 @@ class Saliens(requests.Session):
         self.pbar_refresh()
         return self.planet
 
+    def sort_zones(self, zones, difficulty, cutoff=0.95):
+        return sorted((z for z in zones
+                       if (not z['captured']
+                           and z['difficulty'] == difficulty
+                           and z.get('capture_progress', 0) < cutoff)),
+                      reverse=True,
+                      key=lambda x: x['zone_position'])
+
     def get_planet(self, pid):
         planet = self.sget('ITerritoryControlMinigameService/GetPlanet',
                            {'id': pid, '_': int(time())},
@@ -199,25 +207,9 @@ class Saliens(requests.Session):
                            ).get('planets', [{}])[0]
 
         if planet:
-            planet['easy_zones'] = sorted((z for z in planet['zones']
-                                           if (not z['captured']
-                                               and z['difficulty'] == 1)),
-                                          reverse=True,
-                                          key=lambda x: x['zone_position'])
-
-            planet['medium_zones'] = sorted((z for z in planet['zones']
-                                             if (not z['captured']
-                                                 and z['difficulty'] == 2)),
-#                                                and z.get('capture_progress', 0) < 0.90)),
-                                            reverse=True,
-                                            key=lambda x: x['zone_position'])
-
-            planet['hard_zones'] = sorted((z for z in planet['zones']
-                                           if (not z['captured']
-                                               and z['difficulty'] == 3)),
-#                                              and z.get('capture_progress', 0) < 0.95)),
-                                          reverse=True,
-                                          key=lambda x: x['zone_position'])
+            planet['easy_zones'] = self.sort_zones(planet['zones'], 1, 1.0)
+            planet['medium_zones'] = self.sort_zones(planet['zones'], 2)
+            planet['hard_zones'] = self.sort_zones(planet['zones'], 3)
             planet['boss_zones'] = sorted((z for z in planet['zones']
                                            if not z['captured'] and z['type'] == 4),
                                           reverse=True,
